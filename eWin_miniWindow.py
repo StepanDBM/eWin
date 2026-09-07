@@ -71,6 +71,8 @@ class EWinMiniWindow(QtWidgets.QFrame):
         self.candidate = candidate
         self.snapshot = QtGui.QPixmap()
         self.selected = False
+        self.hovered = False
+        self.setMouseTracking(True)
 
         self.setObjectName("eWinMiniWindow")
         self.setFixedSize(self.CARD_WIDTH, self.CARD_HEIGHT)
@@ -81,6 +83,7 @@ class EWinMiniWindow(QtWidgets.QFrame):
         self.title_label.setAlignment(ALIGN_RIGHT | ALIGN_VCENTER)
         self.title_label.setToolTip(candidate.title)
         self.title_label.setAttribute(TRANSPARENT_FOR_MOUSE, True)
+        self.title_label.setMouseTracking(True)
 
         self.close_button = QtWidgets.QPushButton("X", self)
         self.close_button.setObjectName("eWinMiniWindowClose")
@@ -91,6 +94,27 @@ class EWinMiniWindow(QtWidgets.QFrame):
 
         self.capture_snapshot()
         self.update_style()
+
+    def enterEvent(self, event):
+        self.hovered = True
+        self.update_style()
+        self.update()
+        super(EWinMiniWindow, self).enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.hovered = False
+        self.update_style()
+        self.update()
+        super(EWinMiniWindow, self).leaveEvent(event)
+
+    def visual_state(self):
+        if self.selected:
+            return "selected"
+
+        if self.hovered:
+            return "hovered"
+
+        return "normal"
 
     def resizeEvent(self, event):
         margin = 7
@@ -117,9 +141,19 @@ class EWinMiniWindow(QtWidgets.QFrame):
         painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
         painter.setRenderHint(QtGui.QPainter.SmoothPixmapTransform, True)
 
-        border_width = 3 if self.selected else 1
-        half_border = border_width * 0.5
+        state = self.visual_state()
 
+        if state == "selected":
+            border_width = 3
+            border_color = QtGui.QColor("#78b7ff")
+        elif state == "hovered":
+            border_width = 2
+            border_color = QtGui.QColor("#b4d8ff")
+        else:
+            border_width = 1
+            border_color = QtGui.QColor("#666666")
+
+        half_border = border_width * 0.5
         card_rect = QtCore.QRectF(self.rect()).adjusted(
             half_border,
             half_border,
@@ -139,9 +173,12 @@ class EWinMiniWindow(QtWidgets.QFrame):
         painter.fillPath(clip_path, QtGui.QColor("#242424"))
 
         if not self.snapshot.isNull():
-            painter.drawPixmap(
-                QtCore.QPointF(0, 0),
-                self.snapshot,
+            painter.drawPixmap(QtCore.QPointF(0, 0), self.snapshot)
+
+        if state == "hovered":
+            painter.fillPath(
+                clip_path,
+                QtGui.QColor(100, 170, 230, 26),
             )
 
         gradient_height = 55
@@ -164,10 +201,6 @@ class EWinMiniWindow(QtWidgets.QFrame):
 
         painter.fillRect(gradient_rect, gradient)
         painter.restore()
-
-        border_color = QtGui.QColor(
-            "#78b7ff" if self.selected else "#666666"
-        )
 
         pen = QtGui.QPen(border_color, border_width)
         pen.setJoinStyle(QtCore.Qt.RoundJoin)
@@ -217,11 +250,17 @@ class EWinMiniWindow(QtWidgets.QFrame):
         return True
 
     def set_selected(self, selected):
-        self.selected = bool(selected)
+        selected = bool(selected)
+
+        if self.selected == selected:
+            return
+
+        self.selected = selected
         self.update_style()
 
     def update_style(self):
-        weight = "bold" if self.selected else "normal"
+        state = self.visual_state()
+        title_weight = "bold" if state in ("selected", "hovered") else "normal"
 
         self.setStyleSheet("""
             QFrame#eWinMiniWindow {
@@ -255,7 +294,7 @@ class EWinMiniWindow(QtWidgets.QFrame):
             QPushButton#eWinMiniWindowClose:pressed {
                 background-color: #963333;
             }
-        """ % weight)
+        """ % title_weight)
 
         self.update()
 
