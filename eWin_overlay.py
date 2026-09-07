@@ -6,7 +6,7 @@ except ImportError:
     from PySide2 import QtCore, QtWidgets
 
 import eWin_windows
-
+import eWin_miniWindow
 
 def log(message):
     print("[eWin] {}".format(message))
@@ -57,86 +57,6 @@ SCROLLBAR_OFF = enum_value(
     ("ScrollBarPolicy",),
 )
 
-
-class WindowCard(QtWidgets.QFrame):
-
-    close_requested = QtCore.Signal(object)
-
-    def __init__(self, candidate, parent=None):
-        super(WindowCard, self).__init__(parent)
-
-        self.candidate = candidate
-        self.setObjectName("eWinCard")
-        self.setFixedSize(210, 90)
-
-        self.close_button = QtWidgets.QPushButton("X")
-        self.close_button.setObjectName("eWinCloseButton")
-        self.close_button.setFixedSize(20, 20)
-        self.close_button.setToolTip("Close {}".format(candidate.title))
-        self.close_button.clicked.connect(self._emit_close)
-
-        title = QtWidgets.QLabel(candidate.title)
-        title.setObjectName("eWinCardTitle")
-        title.setAlignment(ALIGN_CENTER)
-        title.setWordWrap(True)
-
-        header_layout = QtWidgets.QHBoxLayout()
-        header_layout.setContentsMargins(0, 0, 0, 0)
-        header_layout.addStretch()
-        header_layout.addWidget(self.close_button)
-
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(10, 6, 6, 10)
-        layout.setSpacing(2)
-        layout.addLayout(header_layout)
-        layout.addWidget(title, 1)
-
-        self.set_selected(False)
-
-    def _emit_close(self):
-        self.close_requested.emit(self.candidate)
-
-    def set_selected(self, selected):
-        border = "2px solid #78b7ff" if selected else "1px solid #666666"
-        background = "#3d6fa8" if selected else "#353535"
-        weight = "bold" if selected else "normal"
-        color = "white" if selected else "#dddddd"
-
-        self.setStyleSheet("""
-            QFrame#eWinCard {{
-                background-color: {};
-                border: {};
-                border-radius: 8px;
-            }}
-
-            QLabel#eWinCardTitle {{
-                color: {};
-                font-size: 13px;
-                font-weight: {};
-                border: none;
-                background: transparent;
-            }}
-
-            QPushButton#eWinCloseButton {{
-                color: #dddddd;
-                background-color: transparent;
-                border: none;
-                border-radius: 10px;
-                font-size: 11px;
-                font-weight: bold;
-            }}
-
-            QPushButton#eWinCloseButton:hover {{
-                color: white;
-                background-color: #c74747;
-            }}
-
-            QPushButton#eWinCloseButton:pressed {{
-                background-color: #9f3030;
-            }}
-        """.format(background, border, color, weight))
-
-
 class EWinOverlay(QtWidgets.QWidget):
 
     def __init__(self, parent=None):
@@ -164,9 +84,9 @@ class EWinOverlay(QtWidgets.QWidget):
         self.container.setObjectName("eWinContainer")
         self.container.setStyleSheet("""
             QFrame#eWinContainer {
-                background-color: rgba(28, 28, 28, 235);
-                border: 1px solid #666666;
-                border-radius: 12px;
+                background-color: rgba(22, 22, 22, 242);
+                border: 1px solid #555555;
+                border-radius: 14px;
             }
         """)
 
@@ -234,7 +154,7 @@ class EWinOverlay(QtWidgets.QWidget):
         self.clear_cards()
 
         for candidate in eWin_windows.get_candidates():
-            card = WindowCard(candidate)
+            card = eWin_miniWindow.EWinMiniWindow(candidate)
             card.close_requested.connect(self.close_candidate)
             self.cards.append(card)
             self.card_layout.addWidget(card)
@@ -267,15 +187,26 @@ class EWinOverlay(QtWidgets.QWidget):
 
     def resize_overlay(self):
         card_count = max(1, len(self.cards))
-        content_width = card_count * 210 + max(0, card_count - 1) * 10 + 28
+
+        card_width = eWin_miniWindow.EWinMiniWindow.CARD_WIDTH
+        card_height = eWin_miniWindow.EWinMiniWindow.CARD_HEIGHT
+
+        content_width = (
+            card_count * card_width
+            + max(0, card_count - 1) * 10
+            + 28
+        )
 
         main_window = eWin_windows.get_maya_main_window()
-        maximum_width = 1100
+        maximum_width = 1200
 
         if main_window:
-            maximum_width = max(300, main_window.width() - 100)
+            maximum_width = max(320, main_window.width() - 100)
 
-        self.resize(min(content_width, maximum_width), 158)
+        self.resize(
+            min(content_width, maximum_width),
+            card_height + 68,
+        )
 
     def center_on_maya(self):
         main_window = eWin_windows.get_maya_main_window()

@@ -8,6 +8,7 @@ import eWin_launcher
 eWin_launcher.uninstall()
 
 MODULE_NAMES = [
+    "eWin_miniWindow",
     "eWin_windows",
     "eWin_overlay",
     "eWin_listener",
