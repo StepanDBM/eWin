@@ -33,7 +33,7 @@ def install():
 
     log("Qt application event listener installed.")
     log("Window discovery and visual overlay are enabled.")
-    log("Accept currently logs the selected window without activating it.")
+    log("Window activation, restoration and closing are enabled.")
 
     return True
 

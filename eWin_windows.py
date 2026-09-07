@@ -2,15 +2,18 @@
 
 try:
     from PySide6 import QtCore, QtWidgets
-    from shiboken6 import isValid
+    from shiboken6 import getCppPointer, isValid, wrapInstance
 except ImportError:
     from PySide2 import QtCore, QtWidgets
-    from shiboken2 import isValid
+    from shiboken2 import getCppPointer, isValid, wrapInstance
+
+from maya import OpenMayaUI as omui
+from maya import cmds
 
 
 EWIN_OBJECT_PREFIX = "eWin"
+_CENTER_ON_ACTIVATE = False
 
-_CENTER_ON_ACTIVATE = True
 
 def log(message):
     print("[eWin] {}".format(message))
@@ -49,11 +52,23 @@ EXCLUDED_WINDOW_TYPES = {
 
 class WindowCandidate:
 
-    def __init__(self, widget):
+    def __init__(
+        self,
+        widget,
+        title=None,
+        workspace_control=None,
+        source="qt",
+    ):
         self.widget = widget
+        self.custom_title = title
+        self.workspace_control = workspace_control
+        self.source = source
 
     @property
     def title(self):
+        if self.custom_title:
+            return self.custom_title.strip()
+
         if not self.is_valid():
             return "<Destroyed Window>"
 
@@ -67,7 +82,30 @@ class WindowCandidate:
         return self.widget.objectName()
 
     @property
+    def identity(self):
+        if self.is_valid():
+            try:
+                return ("qt", int(getCppPointer(self.widget)[0]))
+            except (IndexError, RuntimeError, TypeError):
+                pass
+
+        if self.workspace_control:
+            return ("workspaceControl", self.workspace_control)
+
+        return ("python", id(self))
+
+    @property
     def visible(self):
+        if self.workspace_control_exists():
+            try:
+                return cmds.workspaceControl(
+                    self.workspace_control,
+                    query=True,
+                    visible=True,
+                )
+            except RuntimeError:
+                pass
+
         return self.is_valid() and self.widget.isVisible()
 
     @property
@@ -75,21 +113,60 @@ class WindowCandidate:
         if not self.is_valid():
             return False
 
-        return bool(self.widget.windowState() & WINDOW_MINIMIZED)
+        try:
+            return bool(self.widget.windowState() & WINDOW_MINIMIZED)
+        except RuntimeError:
+            return False
 
     @property
     def active(self):
         return self.is_valid() and self.widget.isActiveWindow()
 
+    @property
+    def is_workspace_control(self):
+        return bool(self.workspace_control)
+
     def is_valid(self):
         try:
-            return self.widget is not None and isValid(self.widget)
+            if self.widget is not None and isValid(self.widget):
+                return True
+        except RuntimeError:
+            pass
+
+        return self.workspace_control_exists()
+
+    def workspace_control_exists(self):
+        if not self.workspace_control:
+            return False
+
+        try:
+            return cmds.workspaceControl(
+                self.workspace_control,
+                query=True,
+                exists=True,
+            )
         except RuntimeError:
             return False
 
+    def refresh_widget(self):
+        if not self.workspace_control_exists():
+            return self.widget
+
+        widget = get_workspace_control_widget(self.workspace_control)
+
+        if widget is not None:
+            self.widget = widget
+
+        return self.widget
+
     def description(self):
-        return "{} | visible={} | minimized={} | active={}".format(
+        return (
+            "{} | source={} | workspaceControl={} | "
+            "visible={} | minimized={} | active={}"
+        ).format(
             self.title,
+            self.source,
+            self.workspace_control or "None",
             self.visible,
             self.minimized,
             self.active,
@@ -186,7 +263,11 @@ class WindowSession:
         elif self.selected_index >= len(self.candidates):
             self.selected_index = 0
 
-        log("SELECTED: {}".format(self.selected.title))
+        selected = self.selected
+
+        if selected:
+            log("SELECTED: {}".format(selected.title))
+
         return True
 
     def clear(self):
@@ -207,22 +288,24 @@ class WindowSession:
         return True
 
     def _remove_invalid_candidates(self):
-        selected_widget = None
+        selected_identity = None
 
         if 0 <= self.selected_index < len(self.candidates):
-            selected_widget = self.candidates[self.selected_index].widget
+            selected_identity = self.candidates[self.selected_index].identity
 
         self.candidates = [
-            candidate for candidate in self.candidates if candidate.is_valid()
+            candidate
+            for candidate in self.candidates
+            if candidate.is_valid()
         ]
 
         if not self.candidates:
             self.selected_index = -1
             return
 
-        if selected_widget:
+        if selected_identity:
             for index, candidate in enumerate(self.candidates):
-                if candidate.widget is selected_widget:
+                if candidate.identity == selected_identity:
                     self.selected_index = index
                     return
 
@@ -233,36 +316,177 @@ _SESSION = WindowSession()
 
 
 def discover_windows():
+    qt_candidates = discover_qt_windows()
+    workspace_candidates = discover_workspace_windows()
+
+    candidates_by_identity = {}
+
+    for candidate in qt_candidates:
+        candidates_by_identity[candidate.identity] = candidate
+
+    for candidate in workspace_candidates:
+        identity = candidate.identity
+        existing = candidates_by_identity.get(identity)
+
+        if existing:
+            existing.workspace_control = candidate.workspace_control
+            existing.source = "qt+workspaceControl"
+
+            if not existing.title and candidate.title:
+                existing.custom_title = candidate.title
+        else:
+            candidates_by_identity[identity] = candidate
+
+    candidates = list(candidates_by_identity.values())
+    return order_candidates(candidates)
+
+
+def discover_qt_windows():
     app = QtWidgets.QApplication.instance()
 
     if app is None:
         log("ERROR: QApplication instance was not found.")
         return []
 
-    candidates = [
-        WindowCandidate(widget)
+    return [
+        WindowCandidate(widget=widget, source="qt")
         for widget in app.topLevelWidgets()
-        if is_candidate_window(widget)
+        if is_candidate_qt_window(widget)
     ]
 
+
+def discover_workspace_windows():
+    candidates = []
+
+    for control in cmds.lsUI(workspaceControls=True) or []:
+        try:
+            if not cmds.workspaceControl(control, query=True, exists=True):
+                continue
+
+            floating = cmds.workspaceControl(
+                control,
+                query=True,
+                floating=True,
+            )
+
+            visible = cmds.workspaceControl(
+                control,
+                query=True,
+                visible=True,
+            )
+
+            if not floating or not visible:
+                continue
+
+            label = cmds.workspaceControl(
+                control,
+                query=True,
+                label=True,
+            )
+
+            widget = get_workspace_control_widget(control)
+
+            if widget is None:
+                log(
+                    "WORKSPACE: Could not find Qt host for '{}'.".format(
+                        control
+                    )
+                )
+                continue
+
+            if widget is get_maya_main_window():
+                continue
+
+            candidates.append(
+                WindowCandidate(
+                    widget=widget,
+                    title=label or widget.windowTitle() or control,
+                    workspace_control=control,
+                    source="workspaceControl",
+                )
+            )
+
+        except RuntimeError as error:
+            log(
+                "WORKSPACE: Could not inspect '{}': {}".format(
+                    control,
+                    error,
+                )
+            )
+
+    return candidates
+
+
+def get_workspace_control_widget(control):
+    try:
+        pointer = omui.MQtUtil.findControl(control)
+
+        if not pointer:
+            pointer = omui.MQtUtil.findLayout(control)
+
+        if not pointer:
+            return None
+
+        widget = wrapInstance(int(pointer), QtWidgets.QWidget)
+
+        if widget is None or not isValid(widget):
+            return None
+
+        host = widget.window()
+
+        if host is not None and isValid(host):
+            return host
+
+        return widget
+
+    except (RuntimeError, TypeError, ValueError):
+        return None
+
+
+def order_candidates(candidates):
+    if not candidates:
+        return []
+
+    active_window = QtWidgets.QApplication.activeWindow()
     active_candidate = None
-    other_candidates = []
+    remaining = []
 
     for candidate in candidates:
-        if candidate.active and active_candidate is None:
+        if active_candidate is None and candidate_matches_active_window(
+            candidate,
+            active_window,
+        ):
             active_candidate = candidate
         else:
-            other_candidates.append(candidate)
+            remaining.append(candidate)
 
-    other_candidates.sort(key=lambda candidate: candidate.title.lower())
+    remaining.sort(key=lambda candidate: candidate.title.lower())
 
     if active_candidate:
-        return [active_candidate] + other_candidates
+        return [active_candidate] + remaining
 
-    return other_candidates
+    return remaining
 
 
-def is_candidate_window(widget):
+def candidate_matches_active_window(candidate, active_window):
+    if not candidate.is_valid():
+        return False
+
+    if candidate.active:
+        return True
+
+    if active_window is None or not isValid(active_window):
+        return False
+
+    try:
+        candidate_pointer = int(getCppPointer(candidate.widget)[0])
+        active_pointer = int(getCppPointer(active_window.window())[0])
+        return candidate_pointer == active_pointer
+    except (IndexError, RuntimeError, TypeError):
+        return False
+
+
+def is_candidate_qt_window(widget):
     try:
         if widget is None or not isValid(widget) or not widget.isWindow():
             return False
@@ -292,19 +516,15 @@ def is_candidate_window(widget):
 
 
 def get_maya_main_window():
-    app = QtWidgets.QApplication.instance()
+    pointer = omui.MQtUtil.mainWindow()
 
-    if app is None:
+    if not pointer:
         return None
 
-    for widget in app.topLevelWidgets():
-        try:
-            if isValid(widget) and widget.objectName() == "MayaWindow":
-                return widget
-        except RuntimeError:
-            continue
-
-    return None
+    try:
+        return wrapInstance(int(pointer), QtWidgets.QWidget)
+    except (RuntimeError, TypeError, ValueError):
+        return None
 
 
 def activate_candidate(candidate):
@@ -312,10 +532,29 @@ def activate_candidate(candidate):
         log("ACTIVATE: Selected window is no longer valid.")
         return False
 
-    widget = candidate.widget
     title = candidate.title
 
     try:
+        if candidate.workspace_control_exists():
+            cmds.workspaceControl(
+                candidate.workspace_control,
+                edit=True,
+                restore=True,
+            )
+
+            candidate.refresh_widget()
+            log(
+                "RESTORE: Workspace control '{}' restored.".format(
+                    candidate.workspace_control
+                )
+            )
+
+        widget = candidate.widget
+
+        if widget is None or not isValid(widget):
+            log("ACTIVATE: '{}' has no valid Qt host.".format(title))
+            return False
+
         if widget.isMinimized():
             widget.showNormal()
             log("RESTORE: '{}' was un-minimized.".format(title))
@@ -335,8 +574,8 @@ def activate_candidate(candidate):
         log("FOCUS: '{}' raised and activated.".format(title))
         return True
 
-    except RuntimeError:
-        log("ACTIVATE: '{}' was destroyed during activation.".format(title))
+    except RuntimeError as error:
+        log("ACTIVATE: Could not activate '{}': {}".format(title, error))
         return False
 
 
@@ -346,11 +585,13 @@ def center_window(widget):
 
     maya_window = get_maya_main_window()
 
-    if maya_window:
+    if maya_window and maya_window.screen():
         available_geometry = maya_window.screen().availableGeometry()
         target_center = maya_window.frameGeometry().center()
     else:
-        screen = QtWidgets.QApplication.screenAt(widget.frameGeometry().center())
+        screen = QtWidgets.QApplication.screenAt(
+            widget.frameGeometry().center()
+        )
 
         if screen is None:
             screen = QtWidgets.QApplication.primaryScreen()
@@ -364,14 +605,17 @@ def center_window(widget):
     geometry = widget.frameGeometry()
     geometry.moveCenter(target_center)
 
+    maximum_x = available_geometry.right() - geometry.width() + 1
+    maximum_y = available_geometry.bottom() - geometry.height() + 1
+
     x = max(
         available_geometry.left(),
-        min(geometry.left(), available_geometry.right() - geometry.width() + 1),
+        min(geometry.left(), maximum_x),
     )
 
     y = max(
         available_geometry.top(),
-        min(geometry.top(), available_geometry.bottom() - geometry.height() + 1),
+        min(geometry.top(), maximum_y),
     )
 
     widget.move(x, y)
@@ -379,14 +623,32 @@ def center_window(widget):
 
 
 def close_candidate(candidate):
-    if not candidate or not candidate.is_valid():
-        log("CLOSE: Window is no longer valid.")
-        _SESSION.remove_candidate(candidate)
+    if not candidate:
+        log("CLOSE: No window candidate was provided.")
         return False
 
     title = candidate.title
 
     try:
+        if candidate.workspace_control_exists():
+            cmds.workspaceControl(
+                candidate.workspace_control,
+                edit=True,
+                close=True,
+            )
+
+            log(
+                "CLOSE: Workspace control '{}' closed.".format(title)
+            )
+
+            _SESSION.remove_candidate(candidate)
+            return True
+
+        if not candidate.is_valid():
+            log("CLOSE: '{}' is no longer valid.".format(title))
+            _SESSION.remove_candidate(candidate)
+            return False
+
         accepted = candidate.widget.close()
 
         if accepted:
@@ -397,10 +659,31 @@ def close_candidate(candidate):
         log("CLOSE: '{}' rejected the close request.".format(title))
         return False
 
-    except RuntimeError:
-        log("CLOSE: '{}' was destroyed during closing.".format(title))
-        _SESSION.remove_candidate(candidate)
+    except RuntimeError as error:
+        log("CLOSE: Could not close '{}': {}".format(title, error))
+
+        if not candidate.is_valid():
+            _SESSION.remove_candidate(candidate)
+
         return False
+
+
+def center_on_activate_enabled():
+    return _CENTER_ON_ACTIVATE
+
+
+def set_center_on_activate(enabled):
+    global _CENTER_ON_ACTIVATE
+
+    _CENTER_ON_ACTIVATE = bool(enabled)
+    state = "enabled" if _CENTER_ON_ACTIVATE else "disabled"
+
+    log("Center selected window {}.".format(state))
+    return _CENTER_ON_ACTIVATE
+
+
+def toggle_center_on_activate():
+    return set_center_on_activate(not _CENTER_ON_ACTIVATE)
 
 
 def begin_session(direction=1):
@@ -437,20 +720,3 @@ def get_selected_candidate():
 
 def get_selected_index():
     return _SESSION.selected_index
-
-def center_on_activate_enabled():
-    return _CENTER_ON_ACTIVATE
-
-
-def set_center_on_activate(enabled):
-    global _CENTER_ON_ACTIVATE
-
-    _CENTER_ON_ACTIVATE = bool(enabled)
-    state = "enabled" if _CENTER_ON_ACTIVATE else "disabled"
-
-    log("Center selected window {}.".format(state))
-    return _CENTER_ON_ACTIVATE
-
-
-def toggle_center_on_activate():
-    return set_center_on_activate(not _CENTER_ON_ACTIVATE)
