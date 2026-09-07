@@ -57,7 +57,14 @@ SCROLLBAR_OFF = enum_value(
     ("ScrollBarPolicy",),
 )
 
+SCROLLBAR_AS_NEEDED = enum_value(
+    QtCore.Qt,
+    "ScrollBarAsNeeded",
+    ("ScrollBarPolicy",),
+)
+
 class EWinOverlay(QtWidgets.QWidget):
+    MAX_COLUMNS = 5
 
     def __init__(self, parent=None):
         super(EWinOverlay, self).__init__(parent, WINDOW_FLAGS)
@@ -119,9 +126,14 @@ class EWinOverlay(QtWidgets.QWidget):
         header_layout.addStretch()
         header_layout.addWidget(self.center_button)
 
-        self.card_layout = QtWidgets.QHBoxLayout()
+        self.card_layout = QtWidgets.QGridLayout()
         self.card_layout.setContentsMargins(14, 10, 14, 14)
-        self.card_layout.setSpacing(10)
+        self.card_layout.setHorizontalSpacing(10)
+        self.card_layout.setVerticalSpacing(10)
+        self.card_layout.setAlignment(
+            enum_value(QtCore.Qt, "AlignTop", ("AlignmentFlag",))
+            | enum_value(QtCore.Qt, "AlignLeft", ("AlignmentFlag",))
+        )
 
         container_layout = QtWidgets.QVBoxLayout(self.container)
         container_layout.setContentsMargins(0, 0, 0, 0)
@@ -133,7 +145,7 @@ class EWinOverlay(QtWidgets.QWidget):
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QtWidgets.QFrame.NoFrame)
         self.scroll_area.setHorizontalScrollBarPolicy(SCROLLBAR_OFF)
-        self.scroll_area.setVerticalScrollBarPolicy(SCROLLBAR_OFF)
+        self.scroll_area.setVerticalScrollBarPolicy(SCROLLBAR_AS_NEEDED)
         self.scroll_area.setStyleSheet("background: transparent;")
         self.scroll_area.setWidget(self.container)
 
@@ -153,11 +165,15 @@ class EWinOverlay(QtWidgets.QWidget):
     def rebuild(self):
         self.clear_cards()
 
-        for candidate in eWin_windows.get_candidates():
+        for index, candidate in enumerate(eWin_windows.get_candidates()):
+            row = index // self.MAX_COLUMNS
+            column = index % self.MAX_COLUMNS
+
             card = eWin_miniWindow.EWinMiniWindow(candidate)
             card.close_requested.connect(self.close_candidate)
+
             self.cards.append(card)
-            self.card_layout.addWidget(card)
+            self.card_layout.addWidget(card, row, column)
 
     def update_selection(self):
         selected_index = eWin_windows.get_selected_index()
@@ -169,7 +185,7 @@ class EWinOverlay(QtWidgets.QWidget):
             self.scroll_area.ensureWidgetVisible(
                 self.cards[selected_index],
                 24,
-                0,
+                24,
             )
 
     def close_candidate(self, candidate):
@@ -187,25 +203,44 @@ class EWinOverlay(QtWidgets.QWidget):
 
     def resize_overlay(self):
         card_count = max(1, len(self.cards))
+        column_count = min(card_count, self.MAX_COLUMNS)
+        row_count = (card_count + self.MAX_COLUMNS - 1) // self.MAX_COLUMNS
 
         card_width = eWin_miniWindow.EWinMiniWindow.CARD_WIDTH
         card_height = eWin_miniWindow.EWinMiniWindow.CARD_HEIGHT
 
+        horizontal_spacing = 10
+        vertical_spacing = 10
+        horizontal_margins = 28
+        card_area_vertical_margins = 24
+        header_height = 40
+
         content_width = (
-            card_count * card_width
-            + max(0, card_count - 1) * 10
-            + 28
+            column_count * card_width
+            + max(0, column_count - 1) * horizontal_spacing
+            + horizontal_margins
+        )
+
+        content_height = (
+            row_count * card_height
+            + max(0, row_count - 1) * vertical_spacing
+            + card_area_vertical_margins
+            + header_height
         )
 
         main_window = eWin_windows.get_maya_main_window()
-        maximum_width = 1200
 
         if main_window:
-            maximum_width = max(320, main_window.width() - 100)
+            available_geometry = main_window.screen().availableGeometry()
+            maximum_width = max(320, available_geometry.width() - 100)
+            maximum_height = max(240, available_geometry.height() - 100)
+        else:
+            maximum_width = 1400
+            maximum_height = 900
 
         self.resize(
             min(content_width, maximum_width),
-            card_height + 68,
+            min(content_height, maximum_height),
         )
 
     def center_on_maya(self):
