@@ -40,8 +40,23 @@ SMOOTH_TRANSFORMATION = enum_value(
     ("TransformationMode",),
 )
 
+LEFT_BUTTON = enum_value(QtCore.Qt, "LeftButton", ("MouseButton",))
+
+POINTING_CURSOR = enum_value(
+    QtCore.Qt,
+    "PointingHandCursor",
+    ("CursorShape",),
+)
+
+TRANSPARENT_FOR_MOUSE = enum_value(
+    QtCore.Qt,
+    "WA_TransparentForMouseEvents",
+    ("WidgetAttribute",),
+)
+
 class EWinMiniWindow(QtWidgets.QFrame):
 
+    activate_requested = QtCore.Signal(object)
     close_requested = QtCore.Signal(object)
 
     CARD_WIDTH = 260
@@ -59,11 +74,13 @@ class EWinMiniWindow(QtWidgets.QFrame):
 
         self.setObjectName("eWinMiniWindow")
         self.setFixedSize(self.CARD_WIDTH, self.CARD_HEIGHT)
+        self.setCursor(POINTING_CURSOR)
 
         self.title_label = QtWidgets.QLabel(candidate.title, self)
         self.title_label.setObjectName("eWinMiniWindowTitle")
         self.title_label.setAlignment(ALIGN_RIGHT | ALIGN_VCENTER)
         self.title_label.setToolTip(candidate.title)
+        self.title_label.setAttribute(TRANSPARENT_FOR_MOUSE, True)
 
         self.close_button = QtWidgets.QPushButton("X", self)
         self.close_button.setObjectName("eWinMiniWindowClose")
@@ -241,6 +258,14 @@ class EWinMiniWindow(QtWidgets.QFrame):
         """ % weight)
 
         self.update()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == LEFT_BUTTON and self.rect().contains(event.pos()):
+            self.activate_requested.emit(self.candidate)
+            event.accept()
+            return
+
+        super(EWinMiniWindow, self).mouseReleaseEvent(event)
 
     def _emit_close(self):
         self.close_requested.emit(self.candidate)

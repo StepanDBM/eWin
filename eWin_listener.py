@@ -62,6 +62,10 @@ class EWinListener(QtCore.QObject):
         super(EWinListener, self).__init__(parent)
 
         self.state = self.STATE_IDLE
+
+        overlay = eWin_overlay.get_overlay()
+        overlay.candidate_activated.connect(self._accept_candidate)
+
         log("Listener created.")
 
     def eventFilter(self, watched, event):
@@ -135,6 +139,23 @@ class EWinListener(QtCore.QObject):
                 return True
 
         return False
+
+    def _accept_candidate(self, candidate):
+        if self.state != self.STATE_ACTIVE:
+            return
+
+        self.state = self.STATE_WAITING_FOR_CTRL_RELEASE
+
+        log("CLICK ACCEPT: Activating '{}'.".format(candidate.title))
+
+        eWin_overlay.hide_overlay()
+        eWin_windows.clear_session()
+
+        QtCore.QTimer.singleShot(
+            0,
+            lambda candidate=candidate:
+                eWin_windows.activate_candidate(candidate),
+        )
 
     def _handle_key_release(self, key):
         if key == KEY_CONTROL:

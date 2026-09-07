@@ -64,6 +64,9 @@ SCROLLBAR_AS_NEEDED = enum_value(
 )
 
 class EWinOverlay(QtWidgets.QWidget):
+
+    candidate_activated = QtCore.Signal(object)
+
     MAX_COLUMNS = 5
 
     def __init__(self, parent=None):
@@ -170,10 +173,17 @@ class EWinOverlay(QtWidgets.QWidget):
             column = index % self.MAX_COLUMNS
 
             card = eWin_miniWindow.EWinMiniWindow(candidate)
+            card.activate_requested.connect(self.activate_candidate)
             card.close_requested.connect(self.close_candidate)
 
             self.cards.append(card)
             self.card_layout.addWidget(card, row, column)
+
+    def activate_candidate(self, candidate):
+        if not candidate or not candidate.is_valid():
+            return
+
+        self.candidate_activated.emit(candidate)
 
     def update_selection(self):
         selected_index = eWin_windows.get_selected_index()
