@@ -621,6 +621,54 @@ def center_window(widget):
     widget.move(x, y)
     return True
 
+def minimize_candidate(candidate):
+    if not candidate or not candidate.is_valid():
+        return False
+
+    candidate.refresh_widget()
+    widget = candidate.widget
+
+    if widget is None or not isValid(widget):
+        log("MINIMIZE: '{}' has no valid Qt host.".format(candidate.title))
+        return False
+
+    try:
+        widget.showMinimized()
+        log("MINIMIZE: '{}' minimized.".format(candidate.title))
+        return True
+    except RuntimeError as error:
+        log("MINIMIZE: Could not minimize '{}': {}".format(
+            candidate.title, error
+        ))
+        return False
+
+def isolate_candidate(candidate, candidates=None):
+    if not candidate or not candidate.is_valid():
+        log("ISOLATE: Selected window is no longer valid.")
+        return False
+
+    if candidates is None:
+        candidates = list(_SESSION.candidates)
+    else:
+        candidates = list(candidates)
+
+    target_identity = candidate.identity
+    minimized_count = 0
+
+    for other in candidates:
+        if other.identity == target_identity:
+            continue
+
+        if minimize_candidate(other):
+            minimized_count += 1
+
+    log(
+        "ISOLATE: Kept '{}' and minimized {} other window(s).".format(
+            candidate.title, minimized_count
+        )
+    )
+
+    return activate_candidate(candidate)
 
 def close_candidate(candidate):
     if not candidate:
@@ -666,6 +714,22 @@ def close_candidate(candidate):
             _SESSION.remove_candidate(candidate)
 
         return False
+
+def close_all_candidates():
+    candidates = list(_SESSION.candidates)
+
+    if not candidates:
+        log("CLOSE ALL: No candidate windows found.")
+        return 0
+
+    closed_count = 0
+
+    for candidate in candidates:
+        if close_candidate(candidate):
+            closed_count += 1
+
+    log("CLOSE ALL: Closed {} window(s).".format(closed_count))
+    return closed_count
 
 
 def center_on_activate_enabled():

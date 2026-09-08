@@ -57,6 +57,7 @@ TRANSPARENT_FOR_MOUSE = enum_value(
 class EWinMiniWindow(QtWidgets.QFrame):
 
     activate_requested = QtCore.Signal(object)
+    isolate_requested = QtCore.Signal(object)
     close_requested = QtCore.Signal(object)
 
     CARD_WIDTH = 260
@@ -92,6 +93,15 @@ class EWinMiniWindow(QtWidgets.QFrame):
         self.close_button.setToolTip("Close {}".format(candidate.title))
         self.close_button.clicked.connect(self._emit_close)
 
+        self.isolate_button = QtWidgets.QPushButton("I", self)
+        self.isolate_button.setObjectName("eWinMiniWindowIsolate")
+        self.isolate_button.setFixedSize(self.CLOSE_SIZE, self.CLOSE_SIZE)
+        self.isolate_button.setFocusPolicy(NO_FOCUS)
+        self.isolate_button.setToolTip(
+            "Isolate {} and minimize the other windows".format(candidate.title)
+        )
+        self.isolate_button.clicked.connect(self._emit_isolate)
+
         self.capture_snapshot()
         self.update_style()
 
@@ -119,6 +129,7 @@ class EWinMiniWindow(QtWidgets.QFrame):
     def resizeEvent(self, event):
         margin = 7
 
+        self.isolate_button.move(margin, margin)
         self.close_button.move(
             self.width() - self.CLOSE_SIZE - margin,
             margin,
@@ -294,6 +305,23 @@ class EWinMiniWindow(QtWidgets.QFrame):
             QPushButton#eWinMiniWindowClose:pressed {
                 background-color: #963333;
             }
+            QPushButton#eWinMiniWindowIsolate {
+                color: white;
+                background-color: rgba(20, 20, 20, 190);
+                border: 1px solid rgba(220, 220, 220, 110);
+                border-radius: 11px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+
+            QPushButton#eWinMiniWindowIsolate:hover {
+                background-color: #3d6fa8;
+                border-color: #78b7ff;
+            }
+
+            QPushButton#eWinMiniWindowIsolate:pressed {
+                background-color: #315983;
+            }
         """ % title_weight)
 
         self.update()
@@ -308,3 +336,6 @@ class EWinMiniWindow(QtWidgets.QFrame):
 
     def _emit_close(self):
         self.close_requested.emit(self.candidate)
+    
+    def _emit_isolate(self):
+        self.isolate_requested.emit(self.candidate)

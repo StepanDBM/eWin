@@ -35,6 +35,9 @@ KEY_TAB = enum_value(QtCore.Qt, "Key_Tab", ("Key",))
 KEY_BACKTAB = enum_value(QtCore.Qt, "Key_Backtab", ("Key",))
 KEY_ESCAPE = enum_value(QtCore.Qt, "Key_Escape", ("Key",))
 KEY_CONTROL = enum_value(QtCore.Qt, "Key_Control", ("Key",))
+KEY_I = enum_value(QtCore.Qt, "Key_I", ("Key",))
+KEY_X = enum_value(QtCore.Qt, "Key_X", ("Key",))
+KEY_C = enum_value(QtCore.Qt, "Key_C", ("Key",))
 
 CONTROL_MODIFIER = enum_value(
     QtCore.Qt,
@@ -65,6 +68,7 @@ class EWinListener(QtCore.QObject):
 
         overlay = eWin_overlay.get_overlay()
         overlay.candidate_activated.connect(self._accept_candidate)
+        overlay.candidate_isolated.connect(self._isolate_candidate)
 
         log("Listener created.")
 
@@ -126,6 +130,18 @@ class EWinListener(QtCore.QObject):
                 eWin_overlay.hide_overlay()
                 return True
 
+            if ctrl_pressed and key in (KEY_I, KEY_X):
+                candidate = eWin_windows.get_selected_candidate()
+
+                if candidate:
+                    self._isolate_candidate(candidate)
+
+                return True
+
+            if ctrl_pressed and key == KEY_C:
+                self._close_all_candidates()
+                return True
+
             if key == KEY_BACKTAB or (key == KEY_TAB and shift_pressed):
                 log("PREVIOUS: Ctrl+Shift+Tab detected.")
                 eWin_windows.select_previous()
@@ -140,22 +156,62 @@ class EWinListener(QtCore.QObject):
 
         return False
 
+    def _isolate_candidate(self, candidate):
+        if self.state != self.STATE_ACTIVE:
+            return
+
+        candidates = eWin_windows.get_candidates()
+
+        log("ISOLATE: Keeping '{}' open.".format(candidate.title))
+        self._finish_interaction()
+
+        QtCore.QTimer.singleShot(
+            0,
+            lambda candidate=candidate, candidates=candidates:
+                eWin_windows.isolate_candidate(candidate, candidates),
+        )
+
     def _accept_candidate(self, candidate):
         if self.state != self.STATE_ACTIVE:
             return
 
-        self.state = self.STATE_WAITING_FOR_CTRL_RELEASE
-
         log("CLICK ACCEPT: Activating '{}'.".format(candidate.title))
-
-        eWin_overlay.hide_overlay()
-        eWin_windows.clear_session()
+        self._finish_interaction()
 
         QtCore.QTimer.singleShot(
             0,
             lambda candidate=candidate:
                 eWin_windows.activate_candidate(candidate),
         )
+
+    def _close_candidates(self, candidates):
+        closed_count = 0
+
+        for candidate in candidates:
+            if eWin_windows.close_candidate(candidate):
+                closed_count += 1
+
+        log("CLOSE ALL: Closed {} window(s).".format(closed_count))
+
+    def _close_all_candidates(self):
+        if self.state != self.STATE_ACTIVE:
+            return
+
+        log("CLOSE ALL: Requested from overlay.")
+        candidates = eWin_windows.get_candidates()
+
+        self._finish_interaction()
+
+        QtCore.QTimer.singleShot(
+            0,
+            lambda candidates=candidates:
+                self._close_candidates(candidates),
+        )
+
+    def _finish_interaction(self):
+        self.state = self.STATE_WAITING_FOR_CTRL_RELEASE
+        eWin_overlay.hide_overlay()
+        eWin_windows.clear_session()
 
     def _handle_key_release(self, key):
         if key == KEY_CONTROL:
@@ -199,7 +255,14 @@ class EWinListener(QtCore.QObject):
         if self.state != self.STATE_ACTIVE:
             return False
 
-        return event.key() in (KEY_TAB, KEY_BACKTAB, KEY_ESCAPE)
+        return event.key() in (
+            KEY_TAB,
+            KEY_BACKTAB,
+            KEY_ESCAPE,
+            KEY_I,
+            KEY_X,
+            KEY_C,
+        )
 
     def reset(self):
         self.state = self.STATE_IDLE
