@@ -13,6 +13,7 @@ from maya import cmds
 
 EWIN_OBJECT_PREFIX = "eWin"
 _CENTER_ON_ACTIVATE = False
+MATRIX_COLUMNS = 5
 
 
 def log(message):
@@ -232,6 +233,74 @@ class WindowSession:
         candidate = self.selected
 
         log("SELECTED PREVIOUS: {}".format(candidate.title))
+        return candidate
+
+    def move_left(self):
+        return self._move_horizontal(-1)
+
+    def move_right(self):
+        return self._move_horizontal(1)
+
+    def move_up(self):
+        return self._move_vertical(-1)
+
+    def move_down(self):
+        return self._move_vertical(1)
+
+    def _move_horizontal(self, direction):
+        if not self._prepare_selection():
+            return None
+
+        current_row = self.selected_index // MATRIX_COLUMNS
+        target_index = self.selected_index + direction
+
+        if target_index < 0 or target_index >= len(self.candidates):
+            return self.selected
+
+        target_row = target_index // MATRIX_COLUMNS
+
+        if target_row != current_row:
+            return self.selected
+
+        self.selected_index = target_index
+        candidate = self.selected
+
+        movement = "LEFT" if direction < 0 else "RIGHT"
+        log("SELECTED {}: {}".format(movement, candidate.title))
+        return candidate
+
+    def _move_vertical(self, direction):
+        if not self._prepare_selection():
+            return None
+
+        current_index = self.selected_index
+        current_row = current_index // MATRIX_COLUMNS
+        current_column = current_index % MATRIX_COLUMNS
+        target_row = current_row + direction
+
+        if target_row < 0:
+            return self.selected
+
+        row_start = target_row * MATRIX_COLUMNS
+
+        if row_start >= len(self.candidates):
+            return self.selected
+
+        row_end = min(
+            row_start + MATRIX_COLUMNS,
+            len(self.candidates),
+        )
+
+        target_index = min(
+            row_start + current_column,
+            row_end - 1,
+        )
+
+        self.selected_index = target_index
+        candidate = self.selected
+
+        movement = "UP" if direction < 0 else "DOWN"
+        log("SELECTED {}: {}".format(movement, candidate.title))
         return candidate
 
     def accept(self):
@@ -670,6 +739,46 @@ def isolate_candidate(candidate, candidates=None):
 
     return activate_candidate(candidate)
 
+def restore_candidate(candidate):
+    if not candidate or not candidate.is_valid():
+        return False
+
+    title = candidate.title
+
+    try:
+        if candidate.workspace_control_exists():
+            cmds.workspaceControl(
+                candidate.workspace_control,
+                edit=True,
+                restore=True,
+            )
+
+            candidate.refresh_widget()
+
+        widget = candidate.widget
+
+        if widget is None or not isValid(widget):
+            log("OPEN: '{}' has no valid Qt host.".format(title))
+            return False
+
+        if widget.isMinimized():
+            widget.showNormal()
+            log("OPEN: '{}' restored.".format(title))
+            return True
+
+        if not widget.isVisible():
+            widget.show()
+            log("OPEN: '{}' shown.".format(title))
+            return True
+
+        widget.raise_()
+        log("OPEN: '{}' raised.".format(title))
+        return True
+
+    except RuntimeError as error:
+        log("OPEN: Could not restore '{}': {}".format(title, error))
+        return False
+
 def close_candidate(candidate):
     if not candidate:
         log("CLOSE: No window candidate was provided.")
@@ -714,6 +823,44 @@ def close_candidate(candidate):
             _SESSION.remove_candidate(candidate)
 
         return False
+
+def open_all_candidates(candidates=None):
+    if candidates is None:
+        candidates = list(_SESSION.candidates)
+    else:
+        candidates = list(candidates)
+
+    if not candidates:
+        log("OPEN ALL: No candidate windows found.")
+        return 0
+
+    opened_count = 0
+
+    for candidate in candidates:
+        if restore_candidate(candidate):
+            opened_count += 1
+
+    log("OPEN ALL: Restored {} window(s).".format(opened_count))
+    return opened_count
+
+def minimize_all_candidates(candidates=None):
+    if candidates is None:
+        candidates = list(_SESSION.candidates)
+    else:
+        candidates = list(candidates)
+
+    if not candidates:
+        log("MINIMIZE ALL: No candidate windows found.")
+        return 0
+
+    minimized_count = 0
+
+    for candidate in candidates:
+        if minimize_candidate(candidate):
+            minimized_count += 1
+
+    log("MINIMIZE ALL: Minimized {} window(s).".format(minimized_count))
+    return minimized_count
 
 def close_all_candidates():
     candidates = list(_SESSION.candidates)
@@ -760,6 +907,21 @@ def select_next():
 
 def select_previous():
     return _SESSION.select_previous()
+
+def move_left():
+    return _SESSION.move_left()
+
+
+def move_right():
+    return _SESSION.move_right()
+
+
+def move_up():
+    return _SESSION.move_up()
+
+
+def move_down():
+    return _SESSION.move_down()
 
 
 def accept_session():

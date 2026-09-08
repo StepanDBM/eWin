@@ -35,9 +35,30 @@ KEY_TAB = enum_value(QtCore.Qt, "Key_Tab", ("Key",))
 KEY_BACKTAB = enum_value(QtCore.Qt, "Key_Backtab", ("Key",))
 KEY_ESCAPE = enum_value(QtCore.Qt, "Key_Escape", ("Key",))
 KEY_CONTROL = enum_value(QtCore.Qt, "Key_Control", ("Key",))
+
+# ISOLATE WITH I (isolate) or X (extract),
+# CLOSE ALL WITH C (close),
+# MINIMIZE ALL WITH U (unsee) or Q (quit),
+# OPEN ALL WITH O (open) or E (expand)
 KEY_I = enum_value(QtCore.Qt, "Key_I", ("Key",))
 KEY_X = enum_value(QtCore.Qt, "Key_X", ("Key",))
 KEY_C = enum_value(QtCore.Qt, "Key_C", ("Key",))
+
+KEY_U = enum_value(QtCore.Qt, "Key_U", ("Key",))
+KEY_Q = enum_value(QtCore.Qt, "Key_Q", ("Key",))
+KEY_O = enum_value(QtCore.Qt, "Key_O", ("Key",))
+KEY_E = enum_value(QtCore.Qt, "Key_E", ("Key",))
+
+# W-A-S-D + UP-DOWN-LEFT-RIGHT miniWindow user Movement
+KEY_W = enum_value(QtCore.Qt, "Key_W", ("Key",))
+KEY_A = enum_value(QtCore.Qt, "Key_A", ("Key",))
+KEY_S = enum_value(QtCore.Qt, "Key_S", ("Key",))
+KEY_D = enum_value(QtCore.Qt, "Key_D", ("Key",))
+
+KEY_UP = enum_value(QtCore.Qt, "Key_Up", ("Key",))
+KEY_LEFT = enum_value(QtCore.Qt, "Key_Left", ("Key",))
+KEY_DOWN = enum_value(QtCore.Qt, "Key_Down", ("Key",))
+KEY_RIGHT = enum_value(QtCore.Qt, "Key_Right", ("Key",))
 
 CONTROL_MODIFIER = enum_value(
     QtCore.Qt,
@@ -138,8 +159,40 @@ class EWinListener(QtCore.QObject):
 
                 return True
 
+            if key in (KEY_Q, KEY_U):
+                self._minimize_all_candidates()
+                return True
+            
+            if key in (KEY_E, KEY_O):
+                self._open_all_candidates()
+                return True
+            
             if ctrl_pressed and key == KEY_C:
                 self._close_all_candidates()
+                return True
+
+            if key in (KEY_W, KEY_UP):
+                log("MOVE: Up.")
+                eWin_windows.move_up()
+                eWin_overlay.update_overlay()
+                return True
+
+            if key in (KEY_A, KEY_LEFT):
+                log("MOVE: Left.")
+                eWin_windows.move_left()
+                eWin_overlay.update_overlay()
+                return True
+
+            if key in (KEY_S, KEY_DOWN):
+                log("MOVE: Down.")
+                eWin_windows.move_down()
+                eWin_overlay.update_overlay()
+                return True
+
+            if key in (KEY_D, KEY_RIGHT):
+                log("MOVE: Right.")
+                eWin_windows.move_right()
+                eWin_overlay.update_overlay()
                 return True
 
             if key == KEY_BACKTAB or (key == KEY_TAB and shift_pressed):
@@ -193,6 +246,36 @@ class EWinListener(QtCore.QObject):
 
         log("CLOSE ALL: Closed {} window(s).".format(closed_count))
 
+    def _open_all_candidates(self):
+        if self.state != self.STATE_ACTIVE:
+            return
+
+        candidates = eWin_windows.get_candidates()
+
+        log("OPEN ALL: Requested from overlay.")
+        self._finish_interaction()
+
+        QtCore.QTimer.singleShot(
+            0,
+            lambda candidates=candidates:
+                eWin_windows.open_all_candidates(candidates),
+        )
+
+    def _minimize_all_candidates(self):
+        if self.state != self.STATE_ACTIVE:
+            return
+
+        candidates = eWin_windows.get_candidates()
+
+        log("MINIMIZE ALL: Requested from overlay.")
+        self._finish_interaction()
+
+        QtCore.QTimer.singleShot(
+            0,
+            lambda candidates=candidates:
+                eWin_windows.minimize_all_candidates(candidates),
+        )
+
     def _close_all_candidates(self):
         if self.state != self.STATE_ACTIVE:
             return
@@ -237,7 +320,7 @@ class EWinListener(QtCore.QObject):
                 eWin_overlay.hide_overlay()
                 eWin_windows.clear_session()
 
-                log("RESET: Ctrl released after cancellation.")
+                log("RESET: Ctrl released.")
                 return True
 
             return False
@@ -255,13 +338,39 @@ class EWinListener(QtCore.QObject):
         if self.state != self.STATE_ACTIVE:
             return False
 
-        return event.key() in (
+        key = event.key()
+
+        if key in (KEY_W, KEY_UP):
+            eWin_windows.move_up()
+            eWin_overlay.update_overlay()
+            return True
+
+        if key in (KEY_A, KEY_LEFT):
+            eWin_windows.move_left()
+            eWin_overlay.update_overlay()
+            return True
+
+        if key in (KEY_S, KEY_DOWN):
+            eWin_windows.move_down()
+            eWin_overlay.update_overlay()
+            return True
+
+        if key in (KEY_D, KEY_RIGHT):
+            eWin_windows.move_right()
+            eWin_overlay.update_overlay()
+            return True
+
+        return key in (
             KEY_TAB,
             KEY_BACKTAB,
             KEY_ESCAPE,
             KEY_I,
+            KEY_Q,
+            KEY_E,
             KEY_X,
             KEY_C,
+            KEY_O,
+            KEY_U,
         )
 
     def reset(self):
