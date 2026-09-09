@@ -34,7 +34,6 @@ WINDOW_FLAGS = (
     enum_value(QtCore.Qt, "Tool", ("WindowType",))
     | enum_value(QtCore.Qt, "FramelessWindowHint", ("WindowType",))
     | enum_value(QtCore.Qt, "WindowStaysOnTopHint", ("WindowType",))
-    | enum_value(QtCore.Qt, "WindowDoesNotAcceptFocus", ("WindowType",))
 )
 
 ATTRIBUTE_TRANSLUCENT = enum_value(
@@ -67,8 +66,10 @@ class EWinOverlay(QtWidgets.QWidget):
 
     candidate_activated = QtCore.Signal(object)
     candidate_isolated = QtCore.Signal(object)
+    search_cancelled = QtCore.Signal()
 
     MAX_COLUMNS = 5
+    MINIMUM_WIDTH = 450
 
     def __init__(self, parent=None):
         super(EWinOverlay, self).__init__(parent, WINDOW_FLAGS)
@@ -125,8 +126,42 @@ class EWinOverlay(QtWidgets.QWidget):
             }
         """)
 
+        self.search_bar = QtWidgets.QLineEdit()
+        self.search_bar.setObjectName("eWinSearchBar")
+        self.search_bar.setPlaceholderText("Search windows...")
+        self.search_bar.setClearButtonEnabled(True)
+        self.search_bar.setMinimumWidth(240)
+        self.search_bar.setMaximumWidth(360)
+        self.search_bar.textChanged.connect(self._search_changed)
+        self.search_bar.returnPressed.connect(self._accept_search)
+
+        self.search_bar.setStyleSheet("""
+            QLineEdit#eWinSearchBar {
+                padding: 5px 9px;
+                color: #dddddd;
+                selection-color: white;
+                selection-background-color: #3d6fa8;
+                background-color: #292929;
+                border: 1px solid #666666;
+                border-radius: 5px;
+                font-size: 11px;
+            }
+
+            QLineEdit#eWinSearchBar:hover {
+                border-color: #888888;
+            }
+
+            QLineEdit#eWinSearchBar:focus {
+                color: white;
+                border-color: #78b7ff;
+                background-color: #303030;
+            }
+        """)
+
         header_layout = QtWidgets.QHBoxLayout()
         header_layout.setContentsMargins(14, 10, 14, 0)
+        header_layout.setSpacing(10)
+        header_layout.addWidget(self.search_bar)
         header_layout.addStretch()
         header_layout.addWidget(self.center_button)
 
@@ -158,6 +193,7 @@ class EWinOverlay(QtWidgets.QWidget):
         layout.addWidget(self.scroll_area)
 
     def show_session(self):
+        self.search_bar.clear()
         self.update_center_button()
         self.rebuild()
         self.update_selection()
@@ -169,7 +205,7 @@ class EWinOverlay(QtWidgets.QWidget):
     def rebuild(self):
         self.clear_cards()
 
-        for index, candidate in enumerate(eWin_windows.get_candidates()):
+        for index, candidate in enumerate(self.filtered_candidates()):
             row = index // self.MAX_COLUMNS
             column = index % self.MAX_COLUMNS
 
@@ -180,6 +216,82 @@ class EWinOverlay(QtWidgets.QWidget):
 
             self.cards.append(card)
             self.card_layout.addWidget(card, row, column)
+
+    def _normalized_text(self, text):
+        return " ".join(text.lower().split())
+
+    def _initials(self, title):
+        words = [
+            word for word in title.replace("-", " ").replace(":", " ").split()
+            if word
+        ]
+
+        return "".join(word[0] for word in words).lower()
+
+    def _match_rank(self, candidate, query):
+        if not query:
+            return 0
+
+        title = self._normalized_text(candidate.title)
+        compact_title = title.replace(" ", "")
+        initials = self._initials(candidate.title)
+
+        if title.startswith(query):
+            return 0
+
+        if compact_title.startswith(query):
+            return 1
+
+        if initials.startswith(query):
+            return 2
+
+        return None
+
+    def filtered_candidates(self):
+        candidates = eWin_windows.get_candidates()
+        query = self._normalized_text(self.search_bar.text())
+
+        if not query:
+            return candidates
+
+        matches = []
+
+        for index, candidate in enumerate(candidates):
+            rank = self._match_rank(candidate, query)
+
+            if rank is not None:
+                matches.append((rank, index, candidate))
+
+        matches.sort(key=lambda item: (item[0], item[1]))
+        return [item[2] for item in matches]
+
+    def focus_search(self):
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        self.search_bar.setFocus()
+        self.search_bar.selectAll()
+
+    def is_search_active(self):
+        return self.search_bar.hasFocus()
+
+    def _search_changed(self, text):
+        self.rebuild()
+        self.resize_overlay()
+        self.center_on_maya()
+        self.update_selection()
+
+    def _accept_search(self):
+        candidates = self.filtered_candidates()
+
+        if not candidates:
+            log("SEARCH: No matching window found.")
+            return
+
+        candidate = candidates[0]
+
+        log("SEARCH: Opening '{}'.".format(candidate.title))
+        self.candidate_activated.emit(candidate)
 
     def isolate_candidate(self, candidate):
         if not candidate or not candidate.is_valid():
@@ -194,17 +306,23 @@ class EWinOverlay(QtWidgets.QWidget):
         self.candidate_activated.emit(candidate)
 
     def update_selection(self):
-        selected_index = eWin_windows.get_selected_index()
+        selected = eWin_windows.get_selected_candidate()
+        selected_identity = selected.identity if selected else None
+        selected_card = None
 
-        for index, card in enumerate(self.cards):
-            card.set_selected(index == selected_index)
-
-        if 0 <= selected_index < len(self.cards):
-            self.scroll_area.ensureWidgetVisible(
-                self.cards[selected_index],
-                24,
-                24,
+        for card in self.cards:
+            is_selected = (
+                selected_identity is not None
+                and card.candidate.identity == selected_identity
             )
+
+            card.set_selected(is_selected)
+
+            if is_selected:
+                selected_card = card
+
+        if selected_card:
+            self.scroll_area.ensureWidgetVisible(selected_card, 24, 24)
 
     def close_candidate(self, candidate):
         eWin_windows.close_candidate(candidate)
@@ -231,7 +349,7 @@ class EWinOverlay(QtWidgets.QWidget):
         vertical_spacing = 10
         horizontal_margins = 28
         card_area_vertical_margins = 24
-        header_height = 40
+        header_height = 46
 
         content_width = (
             column_count * card_width
@@ -256,8 +374,10 @@ class EWinOverlay(QtWidgets.QWidget):
             maximum_width = 1400
             maximum_height = 900
 
+        target_width = max(self.MINIMUM_WIDTH, content_width)
+
         self.resize(
-            min(content_width, maximum_width),
+            min(target_width, maximum_width),
             min(content_height, maximum_height),
         )
 
@@ -272,6 +392,7 @@ class EWinOverlay(QtWidgets.QWidget):
         self.move(geometry.topLeft())
 
     def close_session(self):
+        self.search_bar.clearFocus()
         self.hide()
         self.clear_cards()
 
@@ -316,6 +437,12 @@ def get_overlay():
 
     return _OVERLAY
 
+def focus_search():
+    get_overlay().focus_search()
+
+
+def is_search_active():
+    return bool(_OVERLAY and _OVERLAY.is_search_active())
 
 def show_overlay():
     get_overlay().show_session()

@@ -1,9 +1,9 @@
 # eWin_listener.py
 
 try:
-    from PySide6 import QtCore
+    from PySide6 import QtCore, QtWidgets
 except ImportError:
-    from PySide2 import QtCore
+    from PySide2 import QtCore, QtWidgets
 
 import eWin_overlay
 import eWin_windows
@@ -35,6 +35,11 @@ KEY_TAB = enum_value(QtCore.Qt, "Key_Tab", ("Key",))
 KEY_BACKTAB = enum_value(QtCore.Qt, "Key_Backtab", ("Key",))
 KEY_ESCAPE = enum_value(QtCore.Qt, "Key_Escape", ("Key",))
 KEY_CONTROL = enum_value(QtCore.Qt, "Key_Control", ("Key",))
+
+# Search bar controls
+KEY_F = enum_value(QtCore.Qt, "Key_F", ("Key",))
+KEY_ENTER = enum_value(QtCore.Qt, "Key_Enter", ("Key",))
+KEY_RETURN = enum_value(QtCore.Qt, "Key_Return", ("Key",))
 
 # ISOLATE WITH I (isolate) or X (extract),
 # CLOSE ALL WITH C (close),
@@ -80,7 +85,8 @@ class EWinListener(QtCore.QObject):
 
     STATE_IDLE = 0
     STATE_ACTIVE = 1
-    STATE_WAITING_FOR_CTRL_RELEASE = 2
+    STATE_SEARCH = 2
+    STATE_WAITING_FOR_CTRL_RELEASE = 3
 
     def __init__(self, parent=None):
         super(EWinListener, self).__init__(parent)
@@ -149,6 +155,12 @@ class EWinListener(QtCore.QObject):
 
                 eWin_windows.cancel_session()
                 eWin_overlay.hide_overlay()
+                return True
+
+            if ctrl_pressed and key == KEY_F:
+                self.state = self.STATE_SEARCH
+                log("SEARCH: Search mode activated.")
+                eWin_overlay.focus_search()
                 return True
 
             if ctrl_pressed and key in (KEY_I, KEY_X):
@@ -225,11 +237,21 @@ class EWinListener(QtCore.QObject):
         )
 
     def _accept_candidate(self, candidate):
-        if self.state != self.STATE_ACTIVE:
+        if self.state not in (self.STATE_ACTIVE, self.STATE_SEARCH):
             return
 
-        log("CLICK ACCEPT: Activating '{}'.".format(candidate.title))
-        self._finish_interaction()
+        log("ACCEPT: Activating '{}'.".format(candidate.title))
+
+        modifiers = QtWidgets.QApplication.keyboardModifiers()
+        ctrl_held = bool(modifiers & CONTROL_MODIFIER)
+
+        if ctrl_held:
+            self.state = self.STATE_WAITING_FOR_CTRL_RELEASE
+        else:
+            self.state = self.STATE_IDLE
+
+        eWin_overlay.hide_overlay()
+        eWin_windows.clear_session()
 
         QtCore.QTimer.singleShot(
             0,
@@ -298,6 +320,10 @@ class EWinListener(QtCore.QObject):
 
     def _handle_key_release(self, key):
         if key == KEY_CONTROL:
+            if self.state == self.STATE_SEARCH:
+                log("SEARCH: Ctrl released. Search mode remains active.")
+                return True
+            
             if self.state == self.STATE_ACTIVE:
                 self.state = self.STATE_IDLE
 
@@ -325,7 +351,10 @@ class EWinListener(QtCore.QObject):
 
             return False
 
-        if self.state != self.STATE_IDLE and key in (
+        if self.state in (
+            self.STATE_ACTIVE,
+            self.STATE_WAITING_FOR_CTRL_RELEASE,
+        ) and key in (
             KEY_TAB,
             KEY_BACKTAB,
             KEY_ESCAPE,
@@ -335,6 +364,9 @@ class EWinListener(QtCore.QObject):
         return False
 
     def _handle_auto_repeat(self, event):
+        if self.state == self.STATE_SEARCH:
+            return False
+
         if self.state != self.STATE_ACTIVE:
             return False
 
@@ -365,12 +397,11 @@ class EWinListener(QtCore.QObject):
             KEY_BACKTAB,
             KEY_ESCAPE,
             KEY_I,
-            KEY_Q,
-            KEY_E,
             KEY_X,
             KEY_C,
             KEY_O,
             KEY_U,
+            KEY_F,
         )
 
     def reset(self):
